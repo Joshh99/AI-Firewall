@@ -1,0 +1,576 @@
+import streamlit as st
+import re
+import time
+from datetime import datetime
+
+# ----------------------------------------------------
+# Page configuration
+# ----------------------------------------------------
+st.set_page_config(
+    page_title="AI Firewall · Airia",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ----------------------------------------------------
+# Custom CSS (glassmorphism, gradients, badges, etc.)
+# ----------------------------------------------------
+st.markdown(
+    """
+    <style>
+    /* Global */
+    .stApp {
+        background: radial-gradient(circle at top left, #111827 0, #020617 40%);
+        color: #E5E7EB;
+        font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    }
+
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        max-width: 1150px;
+    }
+
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background: rgba(15, 23, 42, 0.95);
+        backdrop-filter: blur(16px);
+        border-right: 1px solid rgba(148, 163, 184, 0.35);
+    }
+
+    [data-testid="stSidebar"] .css-1d391kg, 
+    [data-testid="stSidebar"] .css-ng1t4o {
+        color: #E5E7EB;
+    }
+
+    /* Buttons */
+    .stButton>button {
+        border-radius: 999px !important;
+        padding: 0.55rem 1rem !important;
+        font-weight: 600 !important;
+        border: 1px solid rgba(148, 163, 184, 0.45) !important;
+        transition: transform 0.12s ease-out, box-shadow 0.12s ease-out, background 0.12s ease-out;
+        background: radial-gradient(circle at top left, #22c55e, #16a34a) !important;
+        color: #0b1120 !important;
+    }
+    .stButton>button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 30px rgba(22, 163, 74, 0.35);
+        background: radial-gradient(circle at top left, #4ade80, #16a34a) !important;
+    }
+
+    /* Secondary-style button (Clear) */
+    .btn-clear > button {
+        background: rgba(15, 23, 42, 0.8) !important;
+        color: #E5E7EB !important;
+        border: 1px solid rgba(148, 163, 184, 0.65) !important;
+        box-shadow: none !important;
+    }
+    .btn-clear > button:hover {
+        background: rgba(30, 64, 175, 0.75) !important;
+        border-color: rgba(129, 140, 248, 1) !important;
+    }
+
+    /* Hero + cards */
+    .hero-card {
+        border-radius: 1.5rem;
+        padding: 1.75rem 1.75rem 1.5rem 1.75rem;
+        background: radial-gradient(circle at top left, rgba(59, 130, 246, 0.45), rgba(17, 24, 39, 0.95));
+        border: 1px solid rgba(129, 140, 248, 0.4);
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.75);
+        display: flex;
+        justify-content: space-between;
+        gap: 2rem;
+        align-items: center;
+    }
+
+    .hero-title {
+        font-size: 2.1rem;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        color: #F9FAFB;
+        margin-bottom: 0.4rem;
+    }
+
+    .hero-subtitle {
+        font-size: 0.98rem;
+        color: #CBD5F5;
+        max-width: 520px;
+        line-height: 1.5;
+        margin-bottom: 0.9rem;
+    }
+
+    .hero-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.42rem;
+        padding: 0.25rem 0.7rem;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.65);
+        color: #E5E7EB;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+    }
+
+    .hero-metrics {
+        display: flex;
+        gap: 1.2rem;
+        margin-top: 0.8rem;
+    }
+
+    .metric-chip {
+        padding: 0.6rem 0.9rem;
+        border-radius: 1rem;
+        background: rgba(15, 23, 42, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        min-width: 130px;
+    }
+    .metric-label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: #9CA3AF;
+    }
+    .metric-value {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: #E5E7EB;
+    }
+
+    .hero-radar {
+        width: 220px;
+        height: 220px;
+        border-radius: 999px;
+        background:
+            radial-gradient(circle at 30% 30%, rgba(248, 250, 252, 0.25), transparent 55%),
+            conic-gradient(from 180deg, rgba(34, 197, 94, 0.6), rgba(56, 189, 248, 0.4), rgba(129, 140, 248, 0.85), rgba(34, 197, 94, 0.6));
+        position: relative;
+        border: 1px solid rgba(148, 163, 184, 0.8);
+        box-shadow: 0 18px 50px rgba(15, 23, 42, 0.9);
+        overflow: hidden;
+    }
+    .hero-radar-inner {
+        position: absolute;
+        inset: 18px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(15, 23, 42, 0.85), rgba(15, 23, 42, 1));
+        border: 1px dashed rgba(156, 163, 175, 0.7);
+    }
+    .hero-radar-dot {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #22C55E;
+        box-shadow: 0 0 18px rgba(34, 197, 94, 0.85);
+        top: 42%;
+        left: 68%;
+    }
+
+    /* Sections */
+    .section-card {
+        margin-top: 1.4rem;
+        padding: 1.25rem 1.25rem 1.1rem 1.25rem;
+        border-radius: 1.2rem;
+        background: rgba(15, 23, 42, 0.94);
+        border: 1px solid rgba(31, 41, 55, 1);
+        box-shadow: 0 14px 35px rgba(15, 23, 42, 0.85);
+    }
+
+    .section-title {
+        font-size: 0.98rem;
+        font-weight: 600;
+        color: #E5E7EB;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin-bottom: 0.5rem;
+    }
+    .section-caption {
+        font-size: 0.82rem;
+        color: #9CA3AF;
+        margin-bottom: 0.5rem;
+    }
+
+    /* Text area label tweak */
+    label[data-testid="stWidgetLabel"] > div {
+        font-size: 0.88rem;
+        font-weight: 500;
+    }
+
+    /* Risk banners */
+    .risk-banner {
+        margin-top: 0.8rem;
+        padding: 0.8rem 1rem;
+        border-radius: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        font-size: 0.9rem;
+    }
+    .risk-chip {
+        padding: 0.18rem 0.7rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+
+    .risk-high {
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.10), rgba(127, 29, 29, 0.6));
+        border: 1px solid rgba(248, 113, 113, 0.8);
+    }
+    .risk-chip-high {
+        background: rgba(248, 113, 113, 0.16);
+        color: #fecaca;
+        border: 1px solid rgba(248, 113, 113, 0.95);
+    }
+
+    .risk-medium {
+        background: linear-gradient(135deg, rgba(234, 179, 8, 0.10), rgba(113, 63, 18, 0.7));
+        border: 1px solid rgba(250, 204, 21, 0.9);
+    }
+    .risk-chip-medium {
+        background: rgba(250, 204, 21, 0.16);
+        color: #FEF9C3;
+        border: 1px solid rgba(250, 204, 21, 0.95);
+    }
+
+    .risk-low {
+        background: linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(6, 95, 70, 0.78));
+        border: 1px solid rgba(52, 211, 153, 0.9);
+    }
+    .risk-chip-low {
+        background: rgba(52, 211, 153, 0.20);
+        color: #DCFCE7;
+        border: 1px solid rgba(52, 211, 153, 1);
+    }
+
+    .risk-none {
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.16), rgba(15, 23, 42, 0.9));
+        border: 1px solid rgba(129, 140, 248, 0.9);
+    }
+    .risk-chip-none {
+        background: rgba(129, 140, 248, 0.18);
+        color: #E0E7FF;
+        border: 1px solid rgba(129, 140, 248, 1);
+    }
+
+    /* Issue cards */
+    .issues-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 0.75rem;
+        margin-top: 0.5rem;
+    }
+    .issue-card {
+        border-radius: 0.9rem;
+        padding: 0.75rem 0.85rem;
+        background: rgba(15, 23, 42, 0.96);
+        border: 1px solid rgba(55, 65, 81, 0.9);
+        position: relative;
+    }
+    .issue-pill {
+        font-size: 0.72rem;
+        padding: 0.16rem 0.6rem;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin-bottom: 0.35rem;
+    }
+    .issue-pill-high {
+        background: rgba(248, 113, 113, 0.14);
+        border: 1px solid rgba(248, 113, 113, 0.9);
+        color: #fecaca;
+    }
+    .issue-pill-medium {
+        background: rgba(250, 204, 21, 0.16);
+        border: 1px solid rgba(250, 204, 21, 0.9);
+        color: #fef3c7;
+    }
+    .issue-pill-low {
+        background: rgba(52, 211, 153, 0.16);
+        border: 1px solid rgba(52, 211, 153, 0.9);
+        color: #d1fae5;
+    }
+    .issue-type {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #E5E7EB;
+        margin-bottom: 0.15rem;
+    }
+    .issue-snippet {
+        font-size: 0.78rem;
+        color: #9CA3AF;
+        font-family: SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        padding: 0.18rem 0.45rem;
+        border-radius: 0.6rem;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px dashed rgba(75, 85, 99, 0.9);
+        display: inline-block;
+        margin-bottom: 0.2rem;
+    }
+    .issue-reason {
+        font-size: 0.78rem;
+        color: #9CA3AF;
+    }
+
+    /* Code blocks */
+    pre, code {
+        border-radius: 0.8rem !important;
+        background: #020617 !important;
+    }
+
+    /* Footer */
+    .footer {
+        text-align: center;
+        color: #6B7280;
+        font-size: 0.8rem;
+        padding: 1.4rem 0 0.4rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ----------------------------------------------------
+# Session state initialization
+# ----------------------------------------------------
+if "issues" not in st.session_state:
+    st.session_state.issues = []
+if "sanitized_prompt" not in st.session_state:
+    st.session_state.sanitized_prompt = ""
+if "llm_response" not in st.session_state:
+    st.session_state.llm_response = ""
+if "risk_level" not in st.session_state:
+    st.session_state.risk_level = ""
+if "scan_complete" not in st.session_state:
+    st.session_state.scan_complete = False
+if "total_scans" not in st.session_state:
+    st.session_state.total_scans = 0
+if "total_issues_flagged" not in st.session_state:
+    st.session_state.total_issues_flagged = 0
+if "safe_prompts" not in st.session_state:
+    st.session_state.safe_prompts = 0
+
+# ----------------------------------------------------
+# Detection functions (same logic as before)
+# ----------------------------------------------------
+def detect_pii(prompt):
+    """Detect PII in the prompt"""
+    issues = []
+    sanitized = prompt
+
+    # SSN Detection
+    ssn_pattern = r"\\b\\d{3}-\\d{2}-\\d{4}\\b"
+    for match in re.finditer(ssn_pattern, prompt):
+        issues.append(
+            {
+                "type": "SSN",
+                "snippet": match.group(),
+                "reason": "Social Security Number detected",
+                "severity": "High",
+            }
+        )
+        sanitized = sanitized.replace(match.group(), "***[REDACTED: SSN]***")
+
+    # Email Detection
+    email_pattern = r"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+    for match in re.finditer(email_pattern, prompt):
+        issues.append(
+            {
+                "type": "EMAIL",
+                "snippet": match.group(),
+                "reason": "Email address detected",
+                "severity": "Medium",
+            }
+        )
+        sanitized = sanitized.replace(match.group(), "***[REDACTED: EMAIL]***")
+
+    # Phone Detection
+    phone_pattern = r"\\b\\d{3}[-.]?\\d{3}[-.]?\\d{4}\\b"
+    for match in re.finditer(phone_pattern, prompt):
+        issues.append(
+            {
+                "type": "PHONE",
+                "snippet": match.group(),
+                "reason": "Phone number detected",
+                "severity": "Medium",
+            }
+        )
+        sanitized = sanitized.replace(match.group(), "***[REDACTED: PHONE]***")
+
+    # Credit Card Detection (16 digits with optional separators)
+    card_pattern = r"\\b\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b"
+    for match in re.finditer(card_pattern, prompt):
+        issues.append(
+            {
+                "type": "CREDIT_CARD",
+                "snippet": match.group(),
+                "reason": "Credit card number detected",
+                "severity": "High",
+            }
+        )
+        sanitized = sanitized.replace(match.group(), "***[REDACTED: CARD]***")
+
+    return issues, sanitized
+
+
+def detect_secrets(prompt):
+    """Detect secrets and confidential keywords"""
+    issues = []
+    secret_keywords = [
+        "password",
+        "api key",
+        "token",
+        "secret",
+        "confidential",
+        "private repo",
+        "nda",
+        "internal use only",
+        "don't tell anyone",
+    ]
+
+    for keyword in secret_keywords:
+        if re.search(r"\\b" + re.escape(keyword) + r"\\b", prompt, re.IGNORECASE):
+            issues.append(
+                {
+                    "type": "SECRET",
+                    "snippet": keyword,
+                    "reason": f'Potential secret keyword: "{keyword}"',
+                    "severity": "High",
+                }
+            )
+
+    return issues
+
+
+def detect_toxic_content(prompt):
+    """Detect toxic or harmful content"""
+    issues = []
+    toxic_keywords = ["kill", "hate", "attack", "violence", "murder", "destroy"]
+
+    for keyword in toxic_keywords:
+        if re.search(r"\\b" + re.escape(keyword) + r"\\b", prompt, re.IGNORECASE):
+            issues.append(
+                {
+                    "type": "TOXIC",
+                    "snippet": keyword,
+                    "reason": f'Potentially harmful content: "{keyword}"',
+                    "severity": "High",
+                }
+            )
+
+    return issues
+
+
+def calculate_risk_level(issues):
+    """Calculate overall risk level"""
+    if not issues:
+        return "None"
+
+    high_count = sum(1 for i in issues if i["severity"] == "High")
+    medium_count = sum(1 for i in issues if i["severity"] == "Medium")
+
+    if high_count > 0:
+        return "High"
+    elif medium_count > 1:
+        return "Medium"
+    elif medium_count > 0:
+        return "Low"
+    return "Low"
+
+
+def scan_prompt(prompt):
+    """Main scanning function"""
+    all_issues = []
+
+    # Run all detections
+    pii_issues, sanitized = detect_pii(prompt)
+    secret_issues = detect_secrets(prompt)
+    toxic_issues = detect_toxic_content(prompt)
+
+    all_issues.extend(pii_issues)
+    all_issues.extend(secret_issues)
+    all_issues.extend(toxic_issues)
+
+    risk_level = calculate_risk_level(all_issues)
+
+    return all_issues, sanitized, risk_level
+
+
+def mock_llm_call(sanitized_prompt):
+    """Mock LLM API call"""
+    time.sleep(1)  # Simulate API delay
+    return f"""[Mock LLM Response]
+
+Processed your sanitized prompt successfully.
+
+Input received: "{sanitized_prompt[:100]}{'...' if len(sanitized_prompt) > 100 else ''}"
+
+This is a simulated response. In production, this would be the actual LLM output based on the sanitized prompt sent to OpenAI, Claude, or another LLM provider.
+
+✓ Sensitive data has been redacted
+✓ Request logged to Airia for audit
+✓ Security policies applied"""
+
+
+def log_to_airia(original_prompt, sanitized_prompt, issues, response=None):
+    """Mock function to log to Airia (replace with actual API call)"""
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "original_prompt": original_prompt,
+        "sanitized_prompt": sanitized_prompt,
+        "issues_detected": len(issues),
+        "issues": issues,
+        "model_used": "gpt-4",
+        "response": response,
+        "blocked": False,
+    }
+    # In production: POST to Airia API
+    return log_entry
+
+# ----------------------------------------------------
+# Sidebar
+# ----------------------------------------------------
+with st.sidebar:
+    st.image("https://img.icons8.com/fluency/96/000000/security-shield-green.png", width=80)
+    st.markdown("### 🛡️ AI Firewall")
+    st.caption("Guardrails for every LLM call, powered by **Airia**.")
+    st.markdown("---")
+
+    st.subheader("What it does")
+    st.info(
+        """
+- 🔐 Detects **PII** (SSNs, emails, phones, cards)  
+- 🔑 Catches **secrets & credentials**  
+- ⚠️ Flags **toxic / harmful** content  
+- 🧾 Logs every call for **audit & governance**
+        """
+    )
+
+    st.markdown("---")
+    st.subheader("📊 Session Stats")
+    col_a, col_b = st.columns(2)
+    col_a.metric("Scans", st.session_state.total_scans)
+    col_b.metric("Issues flagged", st.session_state.total_issues_flagged)
+    st.metric("Safe prompts", st.session_state.safe_prompts)
+
+    st.markdown("---")
+    st.subheader("🧪 Load Example")
+    if st.button("PII prompt"):
+        st.session_state.example_prompt = (
+            "Hi, I'm John and my SSN is 123-45-6789. "
+            "Email me at john@example.com or call 555-123-4567."
+        )
+    if st.button("Secret prompt"):
+        st.session_state.example_prompt = (
+            "Here's my secret API key: sk-1234abcd. "
+            "Please don't share this password: MySecr3t!"
+        )
+
