@@ -1,8 +1,27 @@
 import streamlit as st
 import re
+import os
+import requests
 import time
 from datetime import datetime
+from dotenv import load_dotenv 
 
+load_dotenv()
+
+# Add this after your imports
+@st.cache_data(show_spinner=False)
+def test_api_connections():
+    """Test if APIs are reachable"""
+    try:
+        # Test OpenRouter
+        OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
+        if OPENROUTER_KEY:
+            return "✅ APIs configured"
+        else:
+            return "❌ OPENROUTER_API_KEY missing"
+    except Exception as e:
+        return f"❌ API test failed: {str(e)}"
+    
 # Page configuration
 st.set_page_config(
     page_title="AI Firewall",
@@ -262,38 +281,60 @@ def debug_secrets_detection():
             st.sidebar.write(f"Input: {test}")
             st.sidebar.write(f"Found {len(issues)} issues: {issues}")
 
-def mock_llm_call(sanitized_prompt, model_id):
-    """Mock LLM API call"""
-    time.sleep(1)
-    return f"""This is a mock response from {model_id}.
+def call_llm(sanitized_prompt, model_id):
+    """Real LLM API call to OpenRouter"""
+    try:
+        OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
+        if not OPENROUTER_KEY:
+            return "❌ Error: OPENROUTER_API_KEY not found in environment variables"
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://your-site.com",  # Required by OpenRouter
+                "X-Title": "AI Firewall"  # Required by OpenRouter
+            },
+            json={
+                "model": model_id,
+                "messages": [
+                    {
+                        "role": "user", 
+                        "content": sanitized_prompt
+                    }
+                ],
+                "max_tokens": 500
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        else:
+            return f"❌ API Error: {response.status_code} - {response.text}"
+            
+    except Exception as e:
+        return f"❌ Connection Error: {str(e)}"
 
-Your sanitized prompt was: "{sanitized_prompt[:100]}{'...' if len(sanitized_prompt) > 100 else ''}"
-
-In production, this would be the actual LLM response based on your sanitized input.
-
-Security measures applied:
-- Sensitive data redacted
-- Request logged to Airia
-- Policy compliance verified"""
-
-def mock_airia_log(original_prompt, sanitized_prompt, issues, model_used, response=None, blocked=False):
-    """Mock Airia logging - replace with actual API call"""
-    log_entry = {
-        'timestamp': datetime.now().isoformat(),
-        'original_prompt': original_prompt,
-        'sanitized_prompt': sanitized_prompt,
-        'issues_count': len(issues),
-        'issues': issues,
-        'model_used': model_used,
-        'response': response,
-        'blocked': blocked
-    }
-    # TODO: Replace with actual Airia API call
-    # from airia_logger import AiriaLogger
-    # logger = AiriaLogger()
-    # logger.log_interaction(original_prompt, sanitized_prompt, issues, model_used, response, blocked)
-    
-    return log_entry
+def log_to_airia(original_prompt, sanitized_prompt, issues, model_used, response=None, blocked=False):
+    """Real Airia logging"""
+    try:
+        from airia_logger import AiriaLogger
+        logger = AiriaLogger()
+        
+        log_result = logger.log_interaction(
+            user_input=original_prompt,
+            sanitized_input=sanitized_prompt,
+            detected_issues=issues,
+            model_used=model_used,
+            llm_response=response,
+            was_blocked=blocked
+        )
+        
+        return f"✅ Logged to Airia: {log_result}"
+    except Exception as e:
+        return f"❌ Airia Logging Failed: {str(e)}"
 
 # Sidebar
 with st.sidebar:
@@ -351,6 +392,10 @@ with st.sidebar:
     
     Built for Nova Hackathon 2025
     """)
+
+    st.divider()
+    st.caption(f"Status: {test_api_connections()}")
+
     # Temporary test section - add this before your main content
     if st.sidebar.checkbox("🧪 Enable Debug Mode", False):
         st.sidebar.subheader("Detection Testing")
@@ -444,7 +489,8 @@ if scan_button:
             st.session_state.blocked = False
             
             # Log to Airia
-            mock_airia_log(user_input, sanitized, issues, model_option)
+            log_result = log_to_airia(user_input, sanitized, issues, model_option)
+            st.toast(log_result)
             
         st.rerun()
 
@@ -470,14 +516,16 @@ if scan_send_button:
             if risk == "HIGH":
                 st.session_state.blocked = True
                 st.session_state.llm_response = ""
-                mock_airia_log(user_input, sanitized, issues, model_option, blocked=True)
+                log_result = log_to_airia(user_input, sanitized, issues, model_option, blocked=True)
+                st.toast(log_result)
             else:
                 st.session_state.blocked = False
-                # Call LLM
+                # Call REAL LLM
                 with st.spinner("🤖 Generating response..."):
-                    response = mock_llm_call(sanitized, model_option)
+                    response = call_llm(sanitized, model_option)  # Real API call
                     st.session_state.llm_response = response
-                    mock_airia_log(user_input, sanitized, issues, model_option, response)
+                    log_result = log_to_airia(user_input, sanitized, issues, model_option, response)
+                    st.toast(log_result)
                     
         st.rerun()
 
