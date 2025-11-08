@@ -1,0 +1,433 @@
+import streamlit as st
+import re
+import time
+from datetime import datetime
+
+# Page configuration
+st.set_page_config(
+    page_title="AI Firewall",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Initialize session state
+if 'issues' not in st.session_state:
+    st.session_state.issues = []
+if 'sanitized_prompt' not in st.session_state:
+    st.session_state.sanitized_prompt = ""
+if 'llm_response' not in st.session_state:
+    st.session_state.llm_response = ""
+if 'risk_level' not in st.session_state:
+    st.session_state.risk_level = ""
+if 'scan_complete' not in st.session_state:
+    st.session_state.scan_complete = False
+if 'blocked' not in st.session_state:
+    st.session_state.blocked = False
+
+# Detection functions
+def detect_pii(prompt):
+    """Detect PII in the prompt with proper redaction tracking"""
+    issues = []
+    redaction_map = []  # Track replacements to maintain positions
+    
+    # SSN Detection
+    ssn_pattern = r'\b\d{3}-\d{2}-\d{4}\b'
+    for match in re.finditer(ssn_pattern, prompt):
+        issues.append({
+            'Type': 'SSN',
+            'Snippet': match.group(),
+            'Reason': 'Social Security Number detected',
+            'Severity': 'HIGH',
+            'start': match.start(),
+            'end': match.end()
+        })
+        redaction_map.append({
+            'start': match.start(),
+            'end': match.end(),
+            'replacement': '***[REDACTED: SSN]***'
+        })
+    
+    # Email Detection
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    for match in re.finditer(email_pattern, prompt):
+        issues.append({
+            'Type': 'EMAIL',
+            'Snippet': match.group(),
+            'Reason': 'Email address detected',
+            'Severity': 'MEDIUM',
+            'start': match.start(),
+            'end': match.end()
+        })
+        redaction_map.append({
+            'start': match.start(),
+            'end': match.end(), 
+            'replacement': '***[REDACTED: EMAIL]***'
+        })
+    
+    # Phone Detection
+    phone_pattern = r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b'
+    for match in re.finditer(phone_pattern, prompt):
+        issues.append({
+            'Type': 'PHONE', 
+            'Snippet': match.group(),
+            'Reason': 'Phone number detected',
+            'Severity': 'MEDIUM',
+            'start': match.start(),
+            'end': match.end()
+        })
+        redaction_map.append({
+            'start': match.start(),
+            'end': match.end(),
+            'replacement': '***[REDACTED: PHONE]***'
+        })
+    
+    # Credit Card Detection  
+    card_pattern = r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b'
+    for match in re.finditer(card_pattern, prompt):
+        issues.append({
+            'Type': 'CREDIT_CARD',
+            'Snippet': match.group(),
+            'Reason': 'Credit card number detected',
+            'Severity': 'HIGH',
+            'start': match.start(),
+            'end': match.end()
+        })
+        redaction_map.append({
+            'start': match.start(),
+            'end': match.end(),
+            'replacement': '***[REDACTED: CREDIT_CARD]***'
+        })
+    
+    # Apply redactions in reverse order to maintain positions
+    sanitized = prompt
+    for redact in sorted(redaction_map, key=lambda x: x['start'], reverse=True):
+        sanitized = (sanitized[:redact['start']] + 
+                    redact['replacement'] + 
+                    sanitized[redact['end']:])
+    
+    return issues, sanitized
+
+def detect_secrets(prompt):
+    """Detect secrets and confidential keywords"""
+    issues = []
+    secret_keywords = ['password', 'api key', 'api_key', 'token', 'secret', 'confidential', 
+                      'private repo', 'nda', 'internal use only', "don't tell anyone"]
+    
+    for keyword in secret_keywords:
+        if re.search(r'\b' + re.escape(keyword) + r'\b', prompt, re.IGNORECASE):
+            issues.append({
+                'Type': 'SECRET',
+                'Snippet': keyword,
+                'Reason': f'Potential secret keyword detected',
+                'Severity': 'HIGH'
+            })
+    
+    return issues
+
+def detect_toxic_content(prompt):
+    """Detect toxic or harmful content"""
+    issues = []
+    toxic_keywords = ['kill', 'hate', 'attack', 'violence', 'murder', 'destroy']
+    
+    for keyword in toxic_keywords:
+        if re.search(r'\b' + re.escape(keyword) + r'\b', prompt, re.IGNORECASE):
+            issues.append({
+                'Type': 'TOXIC',
+                'Snippet': keyword,
+                'Reason': f'Potentially harmful content detected',
+                'Severity': 'HIGH'
+            })
+    
+    return issues
+
+def calculate_risk_level(issues):
+    """Calculate overall risk level"""
+    if not issues:
+        return "NONE"
+    
+    high_count = sum(1 for i in issues if i['Severity'] == 'HIGH')
+    medium_count = sum(1 for i in issues if i['Severity'] == 'MEDIUM')
+    
+    if high_count >= 2:
+        return "HIGH"
+    elif high_count >= 1:
+        return "MEDIUM"
+    elif medium_count >= 2:
+        return "MEDIUM"
+    elif medium_count >= 1:
+        return "LOW"
+    return "LOW"
+
+def scan_prompt(prompt, detect_pii_enabled, detect_secrets_enabled, detect_toxic_enabled):
+    """Main scanning function"""
+    all_issues = []
+    sanitized = prompt
+    
+    # Run enabled detections
+    if detect_pii_enabled:
+        pii_issues, sanitized = detect_pii(prompt)
+        all_issues.extend(pii_issues)
+    
+    if detect_secrets_enabled:
+        secret_issues = detect_secrets(sanitized)
+        all_issues.extend(secret_issues)
+    
+    if detect_toxic_enabled:
+        toxic_issues = detect_toxic_content(sanitized)
+        all_issues.extend(toxic_issues)
+    
+    risk_level = calculate_risk_level(all_issues)
+    
+    return all_issues, sanitized, risk_level
+
+def mock_llm_call(sanitized_prompt, model_id):
+    """Mock LLM API call"""
+    time.sleep(1)
+    return f"""This is a mock response from {model_id}.
+
+Your sanitized prompt was: "{sanitized_prompt[:100]}{'...' if len(sanitized_prompt) > 100 else ''}"
+
+In production, this would be the actual LLM response based on your sanitized input.
+
+Security measures applied:
+- Sensitive data redacted
+- Request logged to Airia
+- Policy compliance verified"""
+
+def mock_airia_log(original_prompt, sanitized_prompt, issues, model_used, response=None, blocked=False):
+    """Mock Airia logging - replace with actual API call"""
+    log_entry = {
+        'timestamp': datetime.now().isoformat(),
+        'original_prompt': original_prompt,
+        'sanitized_prompt': sanitized_prompt,
+        'issues_count': len(issues),
+        'issues': issues,
+        'model_used': model_used,
+        'response': response,
+        'blocked': blocked
+    }
+    # TODO: Replace with actual Airia API call
+    # from airia_logger import AiriaLogger
+    # logger = AiriaLogger()
+    # logger.log_interaction(original_prompt, sanitized_prompt, issues, model_used, response, blocked)
+    
+    return log_entry
+
+# Sidebar
+with st.sidebar:
+    st.header("⚙️ Configuration")
+    
+    # Model selection
+    model_option = st.selectbox(
+        "LLM Model",
+        ["openai/gpt-4o-mini", "openai/gpt-4o", "anthropic/claude-3-sonnet"],
+        help="Select which LLM to use for generation"
+    )
+    
+    st.divider()
+    
+    # Detection toggles
+    st.subheader("Detection Settings")
+    detect_pii_enabled = st.checkbox("PII Detection", value=True, help="Detect SSN, email, phone, credit cards")
+    detect_secrets_enabled = st.checkbox("Secrets Detection", value=True, help="Detect API keys, passwords, tokens")
+    detect_toxic_enabled = st.checkbox("Toxic Content", value=True, help="Detect harmful language")
+
+        
+    st.divider()
+    
+    # Quick Stats
+    if st.session_state.scan_complete:
+        st.subheader("📊 Scan Results")
+        col1, col2 = st.columns(2)
+        col1.metric("Issues", len(st.session_state.issues))
+        col2.metric("Risk", st.session_state.risk_level)
+        
+        st.divider()
+    
+    # Demo prompts
+    st.subheader("🧪 Example Prompts")
+    if st.button("Clean Prompt", use_container_width=True):
+        st.session_state.example_prompt = "Explain how transformer models work in NLP"
+    if st.button("PII Example", use_container_width=True):
+        st.session_state.example_prompt = "My SSN is 123-45-6789, email is john@example.com, and phone is 555-123-4567"
+    if st.button("Secrets Example", use_container_width=True):
+        st.session_state.example_prompt = "Here's my API key: sk-abc123 and password: hunter2. This is confidential."
+    if st.button("Mixed Example", use_container_width=True):
+        st.session_state.example_prompt = "SSN: 987-65-4321, email: admin@company.com, API token: ghp_xyz789, card: 4532-1234-5678-9010"
+    
+    st.divider()
+    
+    # About section
+    st.subheader("ℹ️ About")
+    st.info("""
+    **AI Firewall** protects LLM applications by:
+    
+    - Detecting sensitive data (PII)
+    - Identifying secrets & credentials  
+    - Flagging toxic content
+    - Logging to Airia for audit
+    
+    Built for Nova Hackathon 2025
+    """)
+
+# Main content
+st.title("🛡️ AI Firewall")
+st.markdown("**Real-time LLM Security & Governance** | Powered by Airia")
+st.divider()
+
+# Input section
+st.subheader("📝 Enter Your Prompt")
+
+# Handle example prompt loading
+if 'example_prompt' in st.session_state:
+    user_input = st.text_area(
+        label="Prompt Input",
+        value=st.session_state.example_prompt,
+        height=150,
+        placeholder="Type your prompt here...",
+        label_visibility="collapsed"
+    )
+    del st.session_state.example_prompt
+else:
+    user_input = st.text_area(
+        label="Prompt Input",
+        height=150,
+        placeholder="Type your prompt here... (Try including an SSN like 123-45-6789 or email)",
+        label_visibility="collapsed"
+    )
+
+# Character count
+if user_input:
+    st.caption(f"Characters: {len(user_input)}")
+
+st.divider()
+
+# Action buttons
+col1, col2, col3 = st.columns([2, 2, 1])
+
+with col1:
+    scan_button = st.button(
+        "🔍 Scan Only", 
+        type="primary",
+        use_container_width=True
+    )
+
+with col2:
+    scan_send_button = st.button(
+        "🚀 Scan + Send to LLM",
+        type="secondary",
+        use_container_width=True
+    )
+
+with col3:
+    if st.button("🗑️ Clear", use_container_width=True):
+        st.session_state.issues = []
+        st.session_state.sanitized_prompt = ""
+        st.session_state.llm_response = ""
+        st.session_state.risk_level = ""
+        st.session_state.scan_complete = False
+        st.session_state.blocked = False
+        st.rerun()
+
+# Handle Scan Only
+if scan_button:
+    if not user_input.strip():
+        st.warning("⚠️ Please enter a prompt first!")
+    else:
+        with st.spinner("🔍 Scanning prompt..."):
+            issues, sanitized, risk = scan_prompt(
+                user_input, 
+                detect_pii_enabled, 
+                detect_secrets_enabled, 
+                detect_toxic_enabled
+            )
+            
+            st.session_state.issues = issues
+            st.session_state.sanitized_prompt = sanitized
+            st.session_state.risk_level = risk
+            st.session_state.scan_complete = True
+            st.session_state.llm_response = ""
+            st.session_state.blocked = False
+            
+            # Log to Airia
+            mock_airia_log(user_input, sanitized, issues, model_option)
+            
+        st.rerun()
+
+# Handle Scan + Send
+if scan_send_button:
+    if not user_input.strip():
+        st.warning("⚠️ Please enter a prompt first!")
+    else:
+        with st.spinner("🔍 Scanning prompt..."):
+            issues, sanitized, risk = scan_prompt(
+                user_input, 
+                detect_pii_enabled, 
+                detect_secrets_enabled, 
+                detect_toxic_enabled
+            )
+            
+            st.session_state.issues = issues
+            st.session_state.sanitized_prompt = sanitized
+            st.session_state.risk_level = risk
+            st.session_state.scan_complete = True
+            
+            # Block if high risk
+            if risk == "HIGH":
+                st.session_state.blocked = True
+                st.session_state.llm_response = ""
+                mock_airia_log(user_input, sanitized, issues, model_option, blocked=True)
+            else:
+                st.session_state.blocked = False
+                # Call LLM
+                with st.spinner("🤖 Generating response..."):
+                    response = mock_llm_call(sanitized, model_option)
+                    st.session_state.llm_response = response
+                    mock_airia_log(user_input, sanitized, issues, model_option, response)
+                    
+        st.rerun()
+
+# Results section
+if st.session_state.scan_complete:
+    st.divider()
+    
+    # Risk badge
+    num_issues = len(st.session_state.issues)
+    
+    if st.session_state.blocked:
+        st.error(f"🚫 **REQUEST BLOCKED** - High risk detected with {num_issues} critical issues")
+    elif st.session_state.risk_level == "HIGH":
+        st.error(f"🚨 **HIGH RISK** - {num_issues} issues detected")
+    elif st.session_state.risk_level == "MEDIUM":
+        st.warning(f"⚠️ **MEDIUM RISK** - {num_issues} issues detected")
+    elif st.session_state.risk_level == "LOW":
+        st.info(f"ℹ️ **LOW RISK** - {num_issues} issue(s) detected")
+    else:
+        st.success("✅ **NO ISSUES** - Prompt is safe!")
+    
+    # Issues table
+    if st.session_state.issues:
+        with st.expander("⚠️ Issues Detected", expanded=True):
+            st.table(st.session_state.issues)
+    
+    # Sanitized prompt
+    with st.expander("🔒 Sanitized Prompt", expanded=True):
+        st.text_area(
+            label="Sanitized",
+            value=st.session_state.sanitized_prompt,
+            height=150,
+            disabled=True,
+            label_visibility="collapsed"
+        )
+        st.caption("Sensitive data has been redacted for safe LLM processing")
+    
+    # LLM Response
+    if st.session_state.llm_response:
+        with st.expander("🤖 LLM Response", expanded=True):
+            st.markdown(st.session_state.llm_response)
+            st.caption(f"Generated at {datetime.now().strftime('%H:%M:%S')} | Logged to Airia")
+    
+    # Footer note
+    st.divider()
+    st.caption("🔐 All interactions are logged to Airia for security audit and governance")
