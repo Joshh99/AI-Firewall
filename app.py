@@ -245,6 +245,23 @@ def scan_prompt(prompt, detect_pii_enabled, detect_secrets_enabled, detect_toxic
     
     return all_issues, sanitized, risk_level
 
+# Add this temporary debug function
+def debug_secrets_detection():
+    st.sidebar.subheader("🔍 Secrets Debug")
+    test_cases = [
+        "My API key is sk-abc123",
+        "password = hunter2", 
+        "token: ghp_xyz789",
+        "api_key=1234567890",
+        "Here's my secret: confidential info"
+    ]
+    
+    for test in test_cases:
+        if st.sidebar.button(f"Test: {test[:20]}..."):
+            issues = detect_secrets(test)
+            st.sidebar.write(f"Input: {test}")
+            st.sidebar.write(f"Found {len(issues)} issues: {issues}")
+
 def mock_llm_call(sanitized_prompt, model_id):
     """Mock LLM API call"""
     time.sleep(1)
@@ -334,6 +351,18 @@ with st.sidebar:
     
     Built for Nova Hackathon 2025
     """)
+    # Temporary test section - add this before your main content
+    if st.sidebar.checkbox("🧪 Enable Debug Mode", False):
+        st.sidebar.subheader("Detection Testing")
+        test_prompt = st.sidebar.text_area("Test Prompt", 
+                                        "My SSN is 123-45-6789 and API key is sk-abc123")
+        if st.sidebar.button("Test Detection"):
+            issues, sanitized, risk = scan_prompt(test_prompt, True, True, True)
+            st.sidebar.write("Issues:", issues)
+            st.sidebar.write("Sanitized:", sanitized)
+            st.sidebar.write("Risk:", risk)
+    if st.sidebar.checkbox("🔍 Enable Secrets Debug", False):
+        debug_secrets_detection()
 
 # Main content
 st.title("🛡️ AI Firewall")
@@ -496,13 +525,3 @@ if st.session_state.scan_complete:
     st.divider()
     st.caption("🔐 All interactions are logged to Airia for security audit and governance")
 
-# Temporary test section - add this before your main content
-if st.sidebar.checkbox("🧪 Enable Debug Mode", False):
-    st.sidebar.subheader("Detection Testing")
-    test_prompt = st.sidebar.text_area("Test Prompt", 
-                                      "My SSN is 123-45-6789 and API key is sk-abc123")
-    if st.sidebar.button("Test Detection"):
-        issues, sanitized, risk = scan_prompt(test_prompt, True, True, True)
-        st.sidebar.write("Issues:", issues)
-        st.sidebar.write("Sanitized:", sanitized)
-        st.sidebar.write("Risk:", risk)
