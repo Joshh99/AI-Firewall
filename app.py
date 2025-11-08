@@ -43,6 +43,10 @@ if 'scan_complete' not in st.session_state:
     st.session_state.scan_complete = False
 if 'blocked' not in st.session_state:
     st.session_state.blocked = False
+if 'scan_time' not in st.session_state:
+    st.session_state.scan_time = 0
+if 'llm_time' not in st.session_state:
+    st.session_state.llm_time = 0
 
 # Detection functions
 def detect_pii(prompt):
@@ -468,66 +472,74 @@ with col3:
         st.session_state.blocked = False
         st.rerun()
 
-# Handle Scan Only
-if scan_button:
-    if not user_input.strip():
-        st.warning("⚠️ Please enter a prompt first!")
-    else:
-        with st.spinner("🔍 Scanning prompt..."):
-            issues, sanitized, risk = scan_prompt(
-                user_input, 
-                detect_pii_enabled, 
-                detect_secrets_enabled, 
-                detect_toxic_enabled
-            )
-            
-            st.session_state.issues = issues
-            st.session_state.sanitized_prompt = sanitized
-            st.session_state.risk_level = risk
-            st.session_state.scan_complete = True
-            st.session_state.llm_response = ""
-            st.session_state.blocked = False
-            
-            # Log to Airia
-            log_result = log_to_airia(user_input, sanitized, issues, model_option)
-            st.toast(log_result)
-            
-        st.rerun()
-
-# Handle Scan + Send
-if scan_send_button:
-    if not user_input.strip():
-        st.warning("⚠️ Please enter a prompt first!")
-    else:
-        with st.spinner("🔍 Scanning prompt..."):
-            issues, sanitized, risk = scan_prompt(
-                user_input, 
-                detect_pii_enabled, 
-                detect_secrets_enabled, 
-                detect_toxic_enabled
-            )
-            
-            st.session_state.issues = issues
-            st.session_state.sanitized_prompt = sanitized
-            st.session_state.risk_level = risk
-            st.session_state.scan_complete = True
-            
-            # Block if high risk
-            if risk == "HIGH":
-                st.session_state.blocked = True
+try: 
+    # Handle Scan Only
+    if scan_button:
+        if not user_input.strip():
+            st.warning("⚠️ Please enter a prompt first!")
+        else:
+            start_time = time.time()
+            with st.spinner("🔍 Scanning prompt..."):
+                issues, sanitized, risk = scan_prompt(
+                    user_input, 
+                    detect_pii_enabled, 
+                    detect_secrets_enabled, 
+                    detect_toxic_enabled
+                )
+                scan_time = time.time() - start_time
+                
+                st.session_state.issues = issues
+                st.session_state.sanitized_prompt = sanitized
+                st.session_state.risk_level = risk
+                st.session_state.scan_complete = True
                 st.session_state.llm_response = ""
-                log_result = log_to_airia(user_input, sanitized, issues, model_option, blocked=True)
-                st.toast(log_result)
-            else:
                 st.session_state.blocked = False
-                # Call REAL LLM
-                with st.spinner("🤖 Generating response..."):
-                    response = call_llm(sanitized, model_option)  # Real API call
-                    st.session_state.llm_response = response
-                    log_result = log_to_airia(user_input, sanitized, issues, model_option, response)
+                st.session_state.scan_time = scan_time
+                
+                # Log to Airia
+                log_result = log_to_airia(user_input, sanitized, issues, model_option)
+                st.toast(f"Scan completed in {scan_time:.2f}s | {log_result}")
+                
+            st.rerun()
+
+    # Handle Scan + Send
+    if scan_send_button:
+        if not user_input.strip():
+            st.warning("⚠️ Please enter a prompt first!")
+        else:
+            with st.spinner("🔍 Scanning prompt..."):
+                issues, sanitized, risk = scan_prompt(
+                    user_input, 
+                    detect_pii_enabled, 
+                    detect_secrets_enabled, 
+                    detect_toxic_enabled
+                )
+                
+                st.session_state.issues = issues
+                st.session_state.sanitized_prompt = sanitized
+                st.session_state.risk_level = risk
+                st.session_state.scan_complete = True
+                
+                # Block if high risk
+                if risk == "HIGH":
+                    st.session_state.blocked = True
+                    st.session_state.llm_response = ""
+                    log_result = log_to_airia(user_input, sanitized, issues, model_option, blocked=True)
                     st.toast(log_result)
-                    
-        st.rerun()
+                else:
+                    st.session_state.blocked = False
+                    # Call REAL LLM
+                    with st.spinner("🤖 Generating response..."):
+                        response = call_llm(sanitized, model_option)  # Real API call
+                        st.session_state.llm_response = response
+                        log_result = log_to_airia(user_input, sanitized, issues, model_option, response)
+                        st.toast(log_result)
+                        
+            st.rerun()
+except Exception as e:
+    st.error(f"🚨 Application Error: {str(e)}")
+    st.info("Please try again or use a different prompt.")
+
 
 # Results section
 if st.session_state.scan_complete:
@@ -546,6 +558,29 @@ if st.session_state.scan_complete:
         st.info(f"ℹ️ **LOW RISK** - {num_issues} issue(s) detected")
     else:
         st.success("✅ **NO ISSUES** - Prompt is safe!")
+
+    st.divider()
+    
+    # Risk visualization
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        total_issues = len(st.session_state.issues)
+        st.metric("Total Issues", total_issues)
+    
+    with col2:
+        high_issues = sum(1 for i in st.session_state.issues if i['Severity'] == 'HIGH')
+        st.metric("High Severity", high_issues)
+    
+    with col3:
+        medium_issues = sum(1 for i in st.session_state.issues if i['Severity'] == 'MEDIUM')
+        st.metric("Medium Severity", medium_issues)
+    
+    with col4:
+        if st.session_state.blocked:
+            st.error("🚫 BLOCKED")
+        else:
+            st.success("✅ ALLOWED")
     
     # Issues table
     if st.session_state.issues:
