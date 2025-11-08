@@ -109,19 +109,58 @@ def detect_pii(prompt):
     return issues, sanitized
 
 def detect_secrets(prompt):
-    """Detect secrets and confidential keywords"""
+    """Simple but effective secrets detection"""
     issues = []
-    secret_keywords = ['password', 'api key', 'api_key', 'token', 'secret', 'confidential', 
-                      'private repo', 'nda', 'internal use only', "don't tell anyone"]
     
+    # Secret keywords with context
+    secret_keywords = [
+        'api key', 'api_key', 'apikey', 'API_KEY',
+        'password', 'passwd', 'pwd', 
+        'token', 'access_token', 'bearer token',
+        'secret', 'confidential', 'private key',
+        'credential', 'login', 'auth'
+    ]
+    
+    # Look for keywords followed by assignment patterns
     for keyword in secret_keywords:
-        if re.search(r'\b' + re.escape(keyword) + r'\b', prompt, re.IGNORECASE):
+        # Pattern: keyword followed by =, :, or space then some value
+        pattern = r'\b' + re.escape(keyword) + r'\s*[:=]\s*[\'"`]?([^\s\'"`]{3,})[\'"`]?'
+        for match in re.finditer(pattern, prompt, re.IGNORECASE):
             issues.append({
                 'Type': 'SECRET',
-                'Snippet': keyword,
-                'Reason': f'Potential secret keyword detected',
-                'Severity': 'HIGH'
+                'Snippet': match.group(),
+                'Reason': f'Secret assignment detected: {keyword}',
+                'Severity': 'HIGH',
+                'start': match.start(),
+                'end': match.end()
             })
+    
+    # Also detect standalone secret-like strings
+    standalone_patterns = [
+        r'\b(sk-|pk-|AKIA|ghp_)[a-zA-Z0-9_\-]{10,}',
+        r'\b[0-9a-fA-F]{32}\b',  # MD5-like
+        r'\b[a-zA-Z0-9_\-]{20,50}\b'  # Long random strings
+    ]
+    
+    # Common false positives to exclude
+    false_positives = [
+        'http', 'https', 'www.', '.com', '.org', '.net',
+        'example', 'test', 'demo', 'sample'
+    ]
+    
+    for pattern in standalone_patterns:
+        for match in re.finditer(pattern, prompt):
+            snippet = match.group()
+            # Skip obvious false positives
+            if not any(fp in snippet.lower() for fp in false_positives):
+                issues.append({
+                    'Type': 'SECRET',
+                    'Snippet': snippet,
+                    'Reason': 'Potential credential/secret string detected',
+                    'Severity': 'MEDIUM',  # Lower severity for standalone strings
+                    'start': match.start(),
+                    'end': match.end()
+                })
     
     return issues
 
@@ -159,24 +198,49 @@ def calculate_risk_level(issues):
         return "LOW"
     return "LOW"
 
+def redact_prompt(text, issues):
+    """Apply redactions to the prompt based on detected issues"""
+    if not issues:
+        return text
+    
+    # Sort issues by start position (reverse for safe replacement)
+    redaction_map = []
+    for issue in issues:
+        if 'start' in issue and 'end' in issue:
+            redaction_map.append({
+                'start': issue['start'],
+                'end': issue['end'],
+                'replacement': f"***[REDACTED: {issue['Type']}]***"
+            })
+    
+    # Apply redactions in reverse order
+    sanitized = text
+    for redact in sorted(redaction_map, key=lambda x: x['start'], reverse=True):
+        sanitized = (sanitized[:redact['start']] + 
+                    redact['replacement'] + 
+                    sanitized[redact['end']:])
+    
+    return sanitized
+
 def scan_prompt(prompt, detect_pii_enabled, detect_secrets_enabled, detect_toxic_enabled):
-    """Main scanning function"""
+    """Main scanning function with proper redaction"""
     all_issues = []
-    sanitized = prompt
     
     # Run enabled detections
     if detect_pii_enabled:
-        pii_issues, sanitized = detect_pii(prompt)
+        pii_issues, _ = detect_pii(prompt)  # We'll handle redaction separately
         all_issues.extend(pii_issues)
     
     if detect_secrets_enabled:
-        secret_issues = detect_secrets(sanitized)
+        secret_issues = detect_secrets(prompt)
         all_issues.extend(secret_issues)
     
     if detect_toxic_enabled:
-        toxic_issues = detect_toxic_content(sanitized)
+        toxic_issues = detect_toxic_content(prompt)
         all_issues.extend(toxic_issues)
     
+    # Apply redaction to original prompt
+    sanitized = redact_prompt(prompt, all_issues)
     risk_level = calculate_risk_level(all_issues)
     
     return all_issues, sanitized, risk_level
@@ -431,3 +495,14 @@ if st.session_state.scan_complete:
     # Footer note
     st.divider()
     st.caption("🔐 All interactions are logged to Airia for security audit and governance")
+
+# Temporary test section - add this before your main content
+if st.sidebar.checkbox("🧪 Enable Debug Mode", False):
+    st.sidebar.subheader("Detection Testing")
+    test_prompt = st.sidebar.text_area("Test Prompt", 
+                                      "My SSN is 123-45-6789 and API key is sk-abc123")
+    if st.sidebar.button("Test Detection"):
+        issues, sanitized, risk = scan_prompt(test_prompt, True, True, True)
+        st.sidebar.write("Issues:", issues)
+        st.sidebar.write("Sanitized:", sanitized)
+        st.sidebar.write("Risk:", risk)
